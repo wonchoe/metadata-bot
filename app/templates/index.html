@@ -267,8 +267,8 @@
     <div class="card" style="animation-delay:.1s">
       <h3>
         <i class="fa-solid fa-location-dot"></i> Location
-        <span id="locOverrideBadge" style="display:none" class="loc-override-badge">
-          <i class="fa-solid fa-pen" style="font-size:.6rem"></i> overridden
+        <span id="locRandomBadge" style="display:none;font-size:.65rem;background:#0f2040;border:1px solid #60a5fa44;color:#93c5fd;border-radius:4px;padding:2px 7px;margin-left:4px">
+          <i class="fa-solid fa-dice" style="font-size:.6rem"></i> randomized
         </span>
       </h3>
       <div class="loc-bar">
@@ -276,14 +276,21 @@
         <button class="btn btn-ghost btn-sm" onclick="searchMainLocation()">
           <i class="fa-solid fa-magnifying-glass"></i>
         </button>
-        <button class="btn btn-ghost btn-sm" id="locResetBtn" onclick="resetLocation()" style="display:none" title="Reset to profile location">
+        <button class="btn btn-ghost btn-sm" id="locReRandomBtn" onclick="reRandomize()" title="Roll new random address (±10 miles)" style="display:none">
+          <i class="fa-solid fa-dice"></i>
+        </button>
+        <button class="btn btn-ghost btn-sm" id="locResetBtn" onclick="resetToProfile()" style="display:none" title="Reset to profile base location">
           <i class="fa-solid fa-rotate-left"></i>
         </button>
       </div>
       <div id="mainMap"></div>
       <div class="loc-coords" id="locCoords">
         <i class="fa-solid fa-crosshairs"></i>
-        <span id="locCoordsText">Miami, FL · 25.7617, -80.1918</span>
+        <span id="locCoordsText">…</span>
+        <span id="locAddrText" style="color:var(--muted);font-size:.68rem;margin-left:4px;display:none"></span>
+      </div>
+      <div id="locSearchingMsg" style="display:none;font-size:.75rem;color:#60a5fa;margin-top:6px;display:flex;align-items:center;gap:5px">
+        <i class="fa-solid fa-spinner fa-spin"></i> Finding nearby address…
       </div>
     </div>
 
@@ -406,22 +413,140 @@ const PRESETS = {
 
 // ── Main map ──────────────────────────────────────────────────────────────────
 
-function initMainMap(lat, lng) {
-  if (mainMap) { mainMap.remove(); mainMap = null; mainMarker = null; }
-  mainMap = L.map('mainMap').setView([lat, lng], 11);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {attribution:'© OpenStreetMap'}).addTo(mainMap);
-  mainMarker = L.marker([lat, lng], {draggable: true}).addTo(mainMap);
-  mainMarker.on('dragend', e => updateMainCoords(e.target.getLatLng().lat, e.target.getLatLng().lng, true));
-  mainMap.on('click', e => updateMainCoords(e.latlng.lat, e.latlng.lng, true));
+// ── Random nearby address ─────────────────────────────────────────────────────
+
+// Water indicators returned by Nominatim reverse geocoding
+const WATER_KEYS = ['ocean','sea','bay','water','strait','gulf','lake','river','reservoir','wetland','waterway'];
+
+function destPoint(lat, lng, distanceMiles, bearingDeg) {
+  const R = 3958.8; // Earth radius miles
+  const d = distanceMiles / R;
+  const lat1 = lat * Math.PI / 180;
+  const lng1 = lng * Math.PI / 180;
+  const b = bearingDeg * Math.PI / 180;
+  const lat2 = Math.asin(Math.sin(lat1)*Math.cos(d) + Math.cos(lat1)*Math.sin(d)*Math.cos(b));
+  const lng2 = lng1 + Math.atan2(Math.sin(b)*Math.sin(d)*Math.cos(lat1), Math.cos(d) - Math.sin(lat1)*Math.sin(lat2));
+  return { lat: lat2 * 180/Math.PI, lng: lng2 * 180/Math.PI };
 }
 
-function updateMainCoords(lat, lng, isOverride) {
+function isLandAddress(data) {
+  if (!data || data.error) return false;
+  const addr = data.address || {};
+  // reject if any water field present
+  for (const k of WATER_KEYS) if (addr[k]) return false;
+  // reject natural water bodies
+  if (data.class === 'natural' && ['water','coastline','bay','sea','ocean','lake'].includes(data.type)) return false;
+  if (data.class === 'waterway') return false;
+  // require at least one meaningful land address component
+  return !!(addr.road || addr.suburb || addr.neighbourhood || addr.quarter || addr.hamlet || addr.village);
+}
+
+async function findNearbyAddress(baseLat, baseLng, maxMiles = 10, maxAttempts = 12) {
+  for (let i = 0; i < maxAttempts; i++) {
+    // min 0.1 miles so it's actually different, random bearing
+    const dist = 0.1 + Math.random() * maxMiles;
+    const bearing = Math.random() * 360;
+    const pt = destPoint(baseLat, baseLng, dist, bearing);
+    try {
+      const r = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?lat=${pt.lat.toFixed(6)}&lon=${pt.lng.toFixed(6)}&format=json&zoom=17&addressdetails=1`,
+        {headers: {'Accept-Language': 'en'}}
+      );
+      const data = await r.json();
+      if (isLandAddress(data)) {
+        // snap to the actual address coordinates Nominatim returns
+        const snapLat = parseFloat(data.lat);
+        const snapLng = parseFloat(data.lon);
+        const shortAddr = buildShortAddr(data.address);
+        return { lat: snapLat, lng: snapLng, address: shortAddr };
+      }
+    } catch (_) {}
+    // small delay to respect Nominatim rate limit
+    await new Promise(res => setTimeout(res, 300));
+  }
+  return null; // fallback: couldn't find land
+}
+
+function buildShortAddr(addr) {
+  const parts = [addr.road, addr.suburb || addr.neighbourhood, addr.city || addr.town || addr.village].filter(Boolean);
+  return parts.join(', ');
+}
+
+function lastLocKey(profileId) { return `mb_loc_${profileId}`; }
+
+function saveLastLoc(profileId, lat, lng) {
+  localStorage.setItem(lastLocKey(profileId), JSON.stringify({lat, lng}));
+}
+
+function getLastLoc(profileId) {
+  try { return JSON.parse(localStorage.getItem(lastLocKey(profileId))); } catch { return null; }
+}
+
+// ── Main map ──────────────────────────────────────────────────────────────────
+
+function initMainMap(lat, lng) {
+  if (mainMap) { mainMap.remove(); mainMap = null; mainMarker = null; }
+  mainMap = L.map('mainMap').setView([lat, lng], 14);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {attribution:'© OpenStreetMap'}).addTo(mainMap);
+  mainMarker = L.marker([lat, lng], {draggable: true}).addTo(mainMap);
+  mainMarker.on('dragend', e => {
+    const {lat, lng} = e.target.getLatLng();
+    setMapLocation(lat, lng, false);
+    saveLastLoc(activeProfileId, lat, lng);
+  });
+  mainMap.on('click', e => {
+    setMapLocation(e.latlng.lat, e.latlng.lng, false);
+    saveLastLoc(activeProfileId, e.latlng.lat, e.latlng.lng);
+  });
+}
+
+function setMapLocation(lat, lng, isRandom, address) {
+  if (!mainMarker) return;
   mainMarker.setLatLng([lat, lng]);
+  overrideLat = lat; overrideLng = lng;
   document.getElementById('locCoordsText').textContent = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
-  if (isOverride) {
-    overrideLat = lat; overrideLng = lng;
-    document.getElementById('locOverrideBadge').style.display = 'inline-flex';
-    document.getElementById('locResetBtn').style.display = '';
+  const addrEl = document.getElementById('locAddrText');
+  if (address) { addrEl.textContent = address; addrEl.style.display = ''; }
+  else addrEl.style.display = 'none';
+  document.getElementById('locRandomBadge').style.display = isRandom ? 'inline-flex' : 'none';
+  document.getElementById('locReRandomBtn').style.display = '';
+  document.getElementById('locResetBtn').style.display = '';
+}
+
+function setSearching(on) {
+  document.getElementById('locSearchingMsg').style.display = on ? 'flex' : 'none';
+}
+
+async function autoRandomize(profileId, baseLat, baseLng) {
+  setSearching(true);
+  const last = getLastLoc(profileId);
+  const fromLat = last ? last.lat : baseLat;
+  const fromLng = last ? last.lng : baseLng;
+  const result = await findNearbyAddress(fromLat, fromLng, 10);
+  setSearching(false);
+  if (result) {
+    mainMap.flyTo([result.lat, result.lng], 15, {animate:true, duration:.9});
+    setTimeout(() => setMapLocation(result.lat, result.lng, true, result.address), 200);
+    saveLastLoc(profileId, result.lat, result.lng);
+  } else {
+    // fallback: stay at last/base
+    setMapLocation(fromLat, fromLng, false);
+  }
+}
+
+async function reRandomize() {
+  const p = profiles.find(x => x.id === activeProfileId);
+  if (!p) return;
+  const last = getLastLoc(activeProfileId);
+  const fromLat = last ? last.lat : p.gps_latitude;
+  const fromLng = last ? last.lng : p.gps_longitude;
+  setSearching(true);
+  const result = await findNearbyAddress(fromLat, fromLng, 10);
+  setSearching(false);
+  if (result) {
+    mainMap.flyTo([result.lat, result.lng], 15, {animate:true, duration:.9});
+    setTimeout(() => setMapLocation(result.lat, result.lng, true, result.address), 200);
+    saveLastLoc(activeProfileId, result.lat, result.lng);
   }
 }
 
@@ -431,23 +556,30 @@ async function searchMainLocation() {
   const r = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`);
   const data = await r.json();
   if (!data.length) { alert('Location not found'); return; }
-  const {lat, lon, display_name} = data[0];
-  const la = parseFloat(lat), lo = parseFloat(lon);
-  mainMap.flyTo([la, lo], 12, {animate: true, duration: 0.8});
-  setTimeout(() => updateMainCoords(la, lo, true), 100);
-  document.getElementById('locSearch').value = display_name.split(',').slice(0,3).join(',').trim();
+  const la = parseFloat(data[0].lat), lo = parseFloat(data[0].lon);
+  mainMap.flyTo([la, lo], 14, {animate:true, duration:.8});
+  setTimeout(() => setMapLocation(la, lo, false, data[0].display_name.split(',').slice(0,3).join(',')), 200);
+  saveLastLoc(activeProfileId, la, lo);
+  document.getElementById('locSearch').value = '';
 }
 
-function resetLocation() {
+function resetToProfile() {
   const p = profiles.find(x => x.id === activeProfileId);
   if (!p) return;
+  // clear saved loc so next auto-randomize starts fresh from profile base
+  localStorage.removeItem(lastLocKey(activeProfileId));
   overrideLat = null; overrideLng = null;
-  mainMap.flyTo([p.gps_latitude, p.gps_longitude], 11, {animate: true, duration: 0.7});
-  setTimeout(() => mainMarker.setLatLng([p.gps_latitude, p.gps_longitude]), 100);
-  document.getElementById('locCoordsText').textContent = `${p.location_name} · ${p.gps_latitude.toFixed(4)}, ${p.gps_longitude.toFixed(4)}`;
-  document.getElementById('locOverrideBadge').style.display = 'none';
-  document.getElementById('locResetBtn').style.display = 'none';
-  document.getElementById('locSearch').value = '';
+  mainMap.flyTo([p.gps_latitude, p.gps_longitude], 13, {animate:true, duration:.7});
+  setTimeout(() => {
+    mainMarker.setLatLng([p.gps_latitude, p.gps_longitude]);
+    document.getElementById('locCoordsText').textContent = `${p.location_name} · ${p.gps_latitude.toFixed(4)}, ${p.gps_longitude.toFixed(4)}`;
+    document.getElementById('locAddrText').style.display = 'none';
+    document.getElementById('locRandomBadge').style.display = 'none';
+    document.getElementById('locReRandomBtn').style.display = 'none';
+    document.getElementById('locResetBtn').style.display = 'none';
+    // re-randomize from fresh base
+    autoRandomize(activeProfileId, p.gps_latitude, p.gps_longitude);
+  }, 100);
 }
 
 // ── Profiles ──────────────────────────────────────────────────────────────────
@@ -485,9 +617,10 @@ function renderProfiles() {
 function selectProfile(id) {
   activeProfileId = id;
   overrideLat = null; overrideLng = null;
-  document.getElementById('locOverrideBadge').style.display = 'none';
-  document.getElementById('locResetBtn').style.display = 'none';
   document.getElementById('locSearch').value = '';
+  document.getElementById('locRandomBadge').style.display = 'none';
+  document.getElementById('locReRandomBtn').style.display = 'none';
+  document.getElementById('locResetBtn').style.display = 'none';
   renderProfiles();
   const p = profiles.find(x => x.id === id);
   if (!p) return;
@@ -498,13 +631,19 @@ function selectProfile(id) {
     <div class="info-row"><span class="k"><i class="fa-solid fa-aperture" style="font-size:.68rem"></i> ISO / f / exp</span><span class="v">ISO ${p.iso} · f/${p.f_number} · ${p.exposure_time}s</span></div>
     <div class="info-row"><span class="k"><i class="fa-solid fa-location-dot"></i> Default loc</span><span class="v">${p.location_name}</span></div>
   `;
-  document.getElementById('locCoordsText').textContent = `${p.location_name} · ${p.gps_latitude.toFixed(4)}, ${p.gps_longitude.toFixed(4)}`;
+  // Show profile base on map first, then auto-randomize
+  const last = getLastLoc(id);
+  const initLat = last ? last.lat : p.gps_latitude;
+  const initLng = last ? last.lng : p.gps_longitude;
+  document.getElementById('locCoordsText').textContent = `${initLat.toFixed(5)}, ${initLng.toFixed(5)}`;
   if (mainMap) {
-    mainMap.flyTo([p.gps_latitude, p.gps_longitude], 11, {animate:true,duration:.7});
-    mainMarker.setLatLng([p.gps_latitude, p.gps_longitude]);
+    mainMap.flyTo([initLat, initLng], 14, {animate:true, duration:.5});
+    mainMarker.setLatLng([initLat, initLng]);
   } else {
-    initMainMap(p.gps_latitude, p.gps_longitude);
+    initMainMap(initLat, initLng);
   }
+  // Auto-randomize on each profile load
+  autoRandomize(id, p.gps_latitude, p.gps_longitude);
 }
 
 // ── Modal ─────────────────────────────────────────────────────────────────────
