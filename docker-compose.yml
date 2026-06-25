@@ -1,0 +1,11 @@
+services:
+  metabot:
+    image: wonchoe/metadata-bot:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - metabot_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  metabot_data:

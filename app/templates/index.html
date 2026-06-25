@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MetaBot — EXIF Injector</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --bg:#0d0d1a;--card:#13132a;--border:#2a2a4a;--accent:#7c3aed;
+    --accent2:#4f46e5;--text:#e2e8f0;--muted:#64748b;--danger:#ef4444;
+    --success:#22c55e;
+  }
+  body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;min-height:100vh}
+  header{background:linear-gradient(135deg,#1a1a3e,#0d0d1a);border-bottom:1px solid var(--border);padding:16px 24px;display:flex;align-items:center;gap:12px}
+  header h1{font-size:1.4rem;background:linear-gradient(135deg,#a78bfa,#60a5fa);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+  header span{color:var(--muted);font-size:.85rem}
+  .layout{display:grid;grid-template-columns:340px 1fr;gap:0;height:calc(100vh - 58px)}
+  .sidebar{border-right:1px solid var(--border);overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px}
+  .main{display:flex;flex-direction:column;overflow:hidden}
+
+  .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px}
+  .card h3{font-size:.85rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:12px}
+
+  /* Profile list */
+  .profile-item{display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:8px;cursor:pointer;border:1px solid transparent;transition:.15s}
+  .profile-item:hover{background:#1e1e3a;border-color:var(--border)}
+  .profile-item.active{background:#1e1433;border-color:var(--accent)}
+  .profile-item .badge{font-size:.65rem;background:var(--accent);color:#fff;border-radius:4px;padding:2px 5px;margin-left:auto}
+  .profile-name{font-size:.9rem;font-weight:500;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .profile-sub{font-size:.7rem;color:var(--muted)}
+  .icon-btn{background:none;border:none;cursor:pointer;padding:4px;color:var(--muted);border-radius:4px;transition:.15s;font-size:.8rem}
+  .icon-btn:hover{color:var(--text);background:#2a2a4a}
+
+  /* Buttons */
+  .btn{border:none;border-radius:8px;padding:9px 16px;font-size:.85rem;cursor:pointer;font-weight:500;transition:.15s;display:inline-flex;align-items:center;gap:6px}
+  .btn-primary{background:var(--accent);color:#fff}.btn-primary:hover{background:#6d28d9}
+  .btn-success{background:var(--success);color:#fff}.btn-success:hover{background:#16a34a}
+  .btn-danger{background:var(--danger);color:#fff}.btn-danger:hover{background:#dc2626}
+  .btn-ghost{background:transparent;border:1px solid var(--border);color:var(--text)}.btn-ghost:hover{border-color:var(--accent);color:var(--accent)}
+  .btn-sm{padding:5px 10px;font-size:.78rem}
+  .btn-block{width:100%;justify-content:center}
+
+  /* Forms */
+  .form-group{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+  label{font-size:.78rem;color:var(--muted)}
+  input,select{background:#1a1a2e;border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-size:.85rem;outline:none;width:100%;transition:.15s}
+  input:focus,select:focus{border-color:var(--accent)}
+  .form-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+
+  /* Map */
+  #map{width:100%;height:220px;border-radius:8px;border:1px solid var(--border);overflow:hidden}
+
+  /* Upload zone */
+  .upload-area{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;min-height:160px;border:2px dashed var(--border);border-radius:12px;padding:24px;cursor:pointer;transition:.2s;text-align:center}
+  .upload-area:hover,.upload-area.drag{border-color:var(--accent);background:#1a1433}
+  .upload-area svg{color:var(--muted)}
+  .upload-area p{color:var(--muted);font-size:.85rem}
+  .upload-area strong{color:var(--text)}
+
+  /* Process result */
+  .result-box{background:#0f2d0f;border:1px solid var(--success);border-radius:10px;padding:14px;display:flex;align-items:center;gap:12px}
+  .result-box .filename{flex:1;font-size:.85rem;word-break:break-all}
+
+  /* Tabs */
+  .tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);padding:0 16px}
+  .tab{padding:10px 14px;font-size:.85rem;cursor:pointer;border-bottom:2px solid transparent;color:var(--muted);transition:.15s;background:none;border-top:none;border-left:none;border-right:none}
+  .tab.active{border-bottom-color:var(--accent);color:var(--text)}
+  .tab-content{display:none;padding:16px;overflow-y:auto;flex:1}
+  .tab-content.active{display:block}
+
+  /* Modal */
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;z-index:1000;opacity:0;pointer-events:none;transition:.2s}
+  .modal-overlay.open{opacity:1;pointer-events:all}
+  .modal{background:#13132a;border:1px solid var(--border);border-radius:14px;width:min(580px,96vw);max-height:90vh;overflow-y:auto;padding:22px}
+  .modal h2{margin-bottom:16px;font-size:1.1rem}
+  .modal-footer{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+
+  .section-label{font-size:.72rem;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin:12px 0 6px}
+
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+  .chip{padding:4px 10px;border-radius:20px;font-size:.75rem;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--muted);transition:.15s}
+  .chip:hover,.chip.active{border-color:var(--accent);color:var(--text);background:#1a1433}
+
+  .info-row{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #1e1e3a;font-size:.82rem}
+  .info-row .k{color:var(--muted)}.info-row .v{font-weight:500}
+
+  .spinner{width:18px;height:18px;border:2px solid #ffffff44;border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  @media(max-width:768px){.layout{grid-template-columns:1fr;grid-template-rows:auto 1fr}.sidebar{border-right:none;border-bottom:1px solid var(--border);max-height:40vh}}
+</style>
+</head>
+<body>
+
+<header>
+  <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><circle cx="14" cy="14" r="14" fill="#4f46e5"/><path d="M8 14l4 4 8-8" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  <h1>MetaBot</h1>
+  <span>EXIF Injector — make AI content look real</span>
+</header>
+
+<div class="layout">
+  <!-- Sidebar: profiles -->
+  <aside class="sidebar">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div style="font-size:.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:.07em">Profiles</div>
+      <button class="btn btn-primary btn-sm" onclick="openProfileModal()">+ New</button>
+    </div>
+
+    <div id="profileList"></div>
+  </aside>
+
+  <!-- Main area -->
+  <div class="main">
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('process')">Process File</button>
+      <button class="tab" onclick="switchTab('profile')">Profile Details</button>
+    </div>
+
+    <!-- Process tab -->
+    <div class="tab-content active" id="tab-process">
+      <div class="card" style="margin-bottom:14px">
+        <h3>Active profile</h3>
+        <div id="activeProfileInfo" style="font-size:.85rem;color:var(--muted)">Select a profile →</div>
+      </div>
+
+      <div class="card" style="margin-bottom:14px">
+        <h3>Upload photo or video</h3>
+        <div class="upload-area" id="dropZone" onclick="document.getElementById('fileInput').click()">
+          <svg width="40" height="40" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+          <div>
+            <strong>Drop file here</strong>
+            <p>or click to select · JPG, PNG, HEIC, MP4, MOV…</p>
+          </div>
+        </div>
+        <input type="file" id="fileInput" accept="image/*,video/*" style="display:none" onchange="handleFile(this.files[0])">
+        <div id="selectedFile" style="margin-top:8px;font-size:.82rem;color:var(--muted)"></div>
+      </div>
+
+      <div class="card" style="margin-bottom:14px">
+        <h3>Shoot date &amp; time (optional)</h3>
+        <div class="form-row">
+          <div class="form-group" style="margin-bottom:0">
+            <label>Date</label>
+            <input type="date" id="shootDate">
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label>Time</label>
+            <input type="time" id="shootTime">
+          </div>
+        </div>
+      </div>
+
+      <button class="btn btn-success btn-block" id="processBtn" onclick="processFile()" style="margin-bottom:14px">
+        ▶ Inject Metadata &amp; Download
+      </button>
+
+      <div id="resultBox" style="display:none"></div>
+    </div>
+
+    <!-- Profile detail tab -->
+    <div class="tab-content" id="tab-profile">
+      <div id="profileDetailView" style="color:var(--muted);font-size:.85rem">
+        Select a profile from the sidebar to view details.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Profile Modal -->
+<div class="modal-overlay" id="profileModal">
+  <div class="modal">
+    <h2 id="modalTitle">New Profile</h2>
+
+    <div class="section-label">Device presets</div>
+    <div class="chips" id="presetChips">
+      <button class="chip active" onclick="applyPreset(this,'iPhone 15 Pro Max')">iPhone 15 Pro Max</button>
+      <button class="chip" onclick="applyPreset(this,'iPhone 14')">iPhone 14</button>
+      <button class="chip" onclick="applyPreset(this,'Samsung S24 Ultra')">Samsung S24 Ultra</button>
+      <button class="chip" onclick="applyPreset(this,'Google Pixel 8 Pro')">Pixel 8 Pro</button>
+      <button class="chip" onclick="applyPreset(this,'Custom')">Custom</button>
+    </div>
+
+    <div class="form-group">
+      <label>Profile name *</label>
+      <input type="text" id="pName" placeholder="e.g. My iPhone Miami">
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Make</label>
+        <input type="text" id="pMake" value="Apple">
+      </div>
+      <div class="form-group">
+        <label>Model</label>
+        <input type="text" id="pModel" value="iPhone 15 Pro Max">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Software / OS</label>
+        <input type="text" id="pSoftware" value="17.5.1">
+      </div>
+      <div class="form-group">
+        <label>ISO</label>
+        <input type="number" id="pIso" value="50">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>F-number</label>
+        <input type="number" id="pFnumber" value="1.78" step="0.01">
+      </div>
+      <div class="form-group">
+        <label>Focal length (mm)</label>
+        <input type="number" id="pFocal" value="6.765" step="0.001">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Exposure time (e.g. 1/2000)</label>
+      <input type="text" id="pExposure" value="1/2000">
+    </div>
+    <div class="form-group">
+      <label>Lens model</label>
+      <input type="text" id="pLensModel" value="iPhone 15 Pro Max back triple camera 6.765mm f/1.78">
+    </div>
+
+    <div class="section-label">GPS Location</div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <input type="text" id="pLocationName" placeholder="Location name" value="Miami, FL" style="flex:1">
+      <button class="btn btn-ghost btn-sm" onclick="searchLocation()">Search</button>
+    </div>
+    <div id="modalMap" style="height:200px;border-radius:8px;border:1px solid var(--border);overflow:hidden;margin-bottom:10px"></div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Latitude</label>
+        <input type="number" id="pLat" value="25.7617" step="0.000001">
+      </div>
+      <div class="form-group">
+        <label>Longitude</label>
+        <input type="number" id="pLng" value="-80.1918" step="0.000001">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Altitude (m)</label>
+      <input type="number" id="pAlt" value="5.0" step="0.1">
+    </div>
+
+    <div class="form-group" style="flex-direction:row;align-items:center;gap:8px;margin-top:6px">
+      <input type="checkbox" id="pDefault" style="width:auto">
+      <label for="pDefault" style="font-size:.85rem;color:var(--text)">Set as default profile</label>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeProfileModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveProfile()">Save Profile</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+let profiles = [];
+let activeProfileId = null;
+let selectedFile = null;
+let editingProfileId = null;
+let modalMap = null;
+let modalMarker = null;
+
+const PRESETS = {
+  'iPhone 15 Pro Max': {make:'Apple',model:'iPhone 15 Pro Max',software:'17.5.1',f_number:1.78,focal_length:6.765,iso:50,exposure_time:'1/2000',lens_model:'iPhone 15 Pro Max back triple camera 6.765mm f/1.78'},
+  'iPhone 14': {make:'Apple',model:'iPhone 14',software:'16.6.1',f_number:1.9,focal_length:5.7,iso:64,exposure_time:'1/1000',lens_model:'iPhone 14 back dual wide camera 5.7mm f/1.9'},
+  'Samsung S24 Ultra': {make:'Samsung',model:'SM-S928B',software:'One UI 6.1',f_number:1.7,focal_length:6.3,iso:50,exposure_time:'1/2500',lens_model:'Samsung S24 Ultra rear camera 6.3mm f/1.7'},
+  'Google Pixel 8 Pro': {make:'Google',model:'Pixel 8 Pro',software:'Android 14',f_number:1.68,focal_length:6.81,iso:50,exposure_time:'1/3300',lens_model:'Pixel 8 Pro rear main camera 6.81mm f/1.68'},
+};
+
+async function loadProfiles(){
+  const r = await fetch('/api/profiles');
+  profiles = await r.json();
+  renderProfiles();
+  const def = profiles.find(p=>p.is_default) || profiles[0];
+  if(def) selectProfile(def.id);
+}
+
+function renderProfiles(){
+  const el = document.getElementById('profileList');
+  if(!profiles.length){el.innerHTML='<div style="color:var(--muted);font-size:.82rem;padding:8px 0">No profiles yet</div>';return}
+  el.innerHTML = profiles.map(p=>`
+    <div class="profile-item ${p.id===activeProfileId?'active':''}" onclick="selectProfile(${p.id})">
+      <div>
+        <div class="profile-name">${p.name}</div>
+        <div class="profile-sub">${p.model} · ${p.location_name}</div>
+      </div>
+      ${p.is_default?'<span class="badge">default</span>':''}
+      <button class="icon-btn" title="Edit" onclick="event.stopPropagation();openProfileModal(${p.id})">✏️</button>
+      <button class="icon-btn" title="Delete" onclick="event.stopPropagation();deleteProfile(${p.id})">🗑</button>
+    </div>
+  `).join('');
+}
+
+function selectProfile(id){
+  activeProfileId = id;
+  renderProfiles();
+  const p = profiles.find(x=>x.id===id);
+  if(!p) return;
+  document.getElementById('activeProfileInfo').innerHTML = `
+    <div class="info-row"><span class="k">Device</span><span class="v">${p.make} ${p.model}</span></div>
+    <div class="info-row"><span class="k">Location</span><span class="v">${p.location_name} (${p.gps_latitude.toFixed(4)}, ${p.gps_longitude.toFixed(4)})</span></div>
+    <div class="info-row"><span class="k">ISO / f-stop</span><span class="v">ISO ${p.iso} · f/${p.f_number}</span></div>
+    <div class="info-row"><span class="k">Exposure</span><span class="v">${p.exposure_time}s</span></div>
+  `;
+  renderProfileDetail(p);
+}
+
+function renderProfileDetail(p){
+  const rows = [
+    ['Name',p.name],['Make',p.make],['Model',p.model],['Software',p.software],
+    ['Lens',p.lens_model],['f-number',`f/${p.f_number}`],['Focal length',`${p.focal_length}mm`],
+    ['ISO',p.iso],['Exposure',`${p.exposure_time}s`],['Location',p.location_name],
+    ['Latitude',p.gps_latitude],['Longitude',p.gps_longitude],['Altitude',`${p.gps_altitude}m`],
+  ].map(([k,v])=>`<div class="info-row"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('');
+  document.getElementById('profileDetailView').innerHTML = `
+    <div class="card"><h3>Profile: ${p.name}</h3>${rows}</div>
+    <div style="margin-top:14px" id="detailMap"></div>
+  `;
+  setTimeout(()=>{
+    const m = L.map('detailMap').setView([p.gps_latitude,p.gps_longitude],12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap'}).addTo(m);
+    L.marker([p.gps_latitude,p.gps_longitude]).addTo(m);
+  },50);
+}
+
+// ── Modal ────────────────────────────────────────────────────────────────────
+
+function openProfileModal(id=null){
+  editingProfileId = id;
+  document.getElementById('modalTitle').textContent = id ? 'Edit Profile' : 'New Profile';
+  const p = id ? profiles.find(x=>x.id===id) : null;
+  document.getElementById('pName').value = p?.name||'';
+  document.getElementById('pMake').value = p?.make||'Apple';
+  document.getElementById('pModel').value = p?.model||'iPhone 15 Pro Max';
+  document.getElementById('pSoftware').value = p?.software||'17.5.1';
+  document.getElementById('pIso').value = p?.iso||50;
+  document.getElementById('pFnumber').value = p?.f_number||1.78;
+  document.getElementById('pFocal').value = p?.focal_length||6.765;
+  document.getElementById('pExposure').value = p?.exposure_time||'1/2000';
+  document.getElementById('pLensModel').value = p?.lens_model||'iPhone 15 Pro Max back triple camera 6.765mm f/1.78';
+  document.getElementById('pLat').value = p?.gps_latitude||25.7617;
+  document.getElementById('pLng').value = p?.gps_longitude||-80.1918;
+  document.getElementById('pAlt').value = p?.gps_altitude||5.0;
+  document.getElementById('pLocationName').value = p?.location_name||'Miami, FL';
+  document.getElementById('pDefault').checked = p?.is_default||false;
+
+  document.getElementById('profileModal').classList.add('open');
+
+  setTimeout(()=>{
+    if(modalMap){modalMap.remove();modalMap=null;modalMarker=null;}
+    const lat = parseFloat(document.getElementById('pLat').value);
+    const lng = parseFloat(document.getElementById('pLng').value);
+    modalMap = L.map('modalMap').setView([lat,lng],10);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap'}).addTo(modalMap);
+    modalMarker = L.marker([lat,lng],{draggable:true}).addTo(modalMap);
+    modalMarker.on('dragend',e=>{
+      const {lat,lng} = e.target.getLatLng();
+      document.getElementById('pLat').value=lat.toFixed(6);
+      document.getElementById('pLng').value=lng.toFixed(6);
+    });
+    modalMap.on('click',e=>{
+      const {lat,lng}=e.latlng;
+      modalMarker.setLatLng([lat,lng]);
+      document.getElementById('pLat').value=lat.toFixed(6);
+      document.getElementById('pLng').value=lng.toFixed(6);
+    });
+  },100);
+}
+
+function closeProfileModal(){
+  document.getElementById('profileModal').classList.remove('open');
+}
+
+function applyPreset(btn, name){
+  document.querySelectorAll('.chip').forEach(c=>c.classList.remove('active'));
+  btn.classList.add('active');
+  const p = PRESETS[name];
+  if(!p) return;
+  document.getElementById('pMake').value=p.make;
+  document.getElementById('pModel').value=p.model;
+  document.getElementById('pSoftware').value=p.software;
+  document.getElementById('pFnumber').value=p.f_number;
+  document.getElementById('pFocal').value=p.focal_length;
+  document.getElementById('pIso').value=p.iso;
+  document.getElementById('pExposure').value=p.exposure_time;
+  document.getElementById('pLensModel').value=p.lens_model;
+}
+
+async function searchLocation(){
+  const q = document.getElementById('pLocationName').value.trim();
+  if(!q) return;
+  const r = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`);
+  const data = await r.json();
+  if(!data.length){alert('Location not found');return}
+  const {lat,lon,display_name} = data[0];
+  document.getElementById('pLat').value=parseFloat(lat).toFixed(6);
+  document.getElementById('pLng').value=parseFloat(lon).toFixed(6);
+  document.getElementById('pLocationName').value=display_name.split(',').slice(0,3).join(',').trim();
+  if(modalMap&&modalMarker){
+    modalMap.setView([lat,lon],12);
+    modalMarker.setLatLng([lat,lon]);
+  }
+}
+
+async function saveProfile(){
+  const body = new FormData();
+  body.append('name', document.getElementById('pName').value.trim());
+  body.append('make', document.getElementById('pMake').value);
+  body.append('model', document.getElementById('pModel').value);
+  body.append('software', document.getElementById('pSoftware').value);
+  body.append('lens_make', document.getElementById('pMake').value);
+  body.append('lens_model', document.getElementById('pLensModel').value);
+  body.append('f_number', document.getElementById('pFnumber').value);
+  body.append('focal_length', document.getElementById('pFocal').value);
+  body.append('iso', document.getElementById('pIso').value);
+  body.append('exposure_time', document.getElementById('pExposure').value);
+  body.append('gps_latitude', document.getElementById('pLat').value);
+  body.append('gps_longitude', document.getElementById('pLng').value);
+  body.append('gps_altitude', document.getElementById('pAlt').value);
+  body.append('location_name', document.getElementById('pLocationName').value);
+  body.append('is_default', document.getElementById('pDefault').checked ? 'true' : 'false');
+
+  if(!body.get('name')){alert('Profile name is required');return}
+
+  const url = editingProfileId ? `/api/profiles/${editingProfileId}` : '/api/profiles';
+  const method = editingProfileId ? 'PUT' : 'POST';
+  await fetch(url,{method,body});
+  closeProfileModal();
+  await loadProfiles();
+}
+
+async function deleteProfile(id){
+  if(!confirm('Delete this profile?')) return;
+  await fetch(`/api/profiles/${id}`,{method:'DELETE'});
+  if(activeProfileId===id) activeProfileId=null;
+  await loadProfiles();
+}
+
+// ── File processing ──────────────────────────────────────────────────────────
+
+function handleFile(f){
+  selectedFile=f;
+  document.getElementById('selectedFile').textContent = f ? `Selected: ${f.name} (${(f.size/1024/1024).toFixed(2)} MB)` : '';
+}
+
+const dropZone = document.getElementById('dropZone');
+dropZone.addEventListener('dragover',e=>{e.preventDefault();dropZone.classList.add('drag')});
+dropZone.addEventListener('dragleave',()=>dropZone.classList.remove('drag'));
+dropZone.addEventListener('drop',e=>{
+  e.preventDefault();dropZone.classList.remove('drag');
+  handleFile(e.dataTransfer.files[0]);
+});
+
+async function processFile(){
+  if(!selectedFile){alert('Please select a file first');return}
+  if(!activeProfileId){alert('Please select a profile first');return}
+
+  const btn = document.getElementById('processBtn');
+  btn.innerHTML='<div class="spinner"></div> Processing…';
+  btn.disabled=true;
+  document.getElementById('resultBox').style.display='none';
+
+  const body = new FormData();
+  body.append('file', selectedFile);
+  body.append('profile_id', activeProfileId);
+
+  const d = document.getElementById('shootDate').value;
+  const t = document.getElementById('shootTime').value;
+  if(d&&t) body.append('custom_datetime', `${d.replaceAll('-',':')} ${t}:00`);
+
+  try{
+    const r = await fetch('/api/process',{method:'POST',body});
+    if(!r.ok){const e=await r.json();throw new Error(e.detail||'Server error')}
+    const data = await r.json();
+    document.getElementById('resultBox').style.display='block';
+    document.getElementById('resultBox').innerHTML=`
+      <div class="result-box">
+        <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="color:var(--success);flex-shrink:0"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+        <div class="filename">✅ Ready: ${data.filename}</div>
+        <a href="${data.download_url}" download class="btn btn-success btn-sm">⬇ Download</a>
+      </div>
+    `;
+  }catch(e){
+    alert('Error: '+e.message);
+  }finally{
+    btn.innerHTML='▶ Inject Metadata &amp; Download';
+    btn.disabled=false;
+  }
+}
+
+// ── Tabs ─────────────────────────────────────────────────────────────────────
+
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach((t,i)=>{
+    const tabs=['process','profile'];
+    t.classList.toggle('active',tabs[i]===name);
+  });
+  document.querySelectorAll('.tab-content').forEach(c=>{
+    c.classList.toggle('active',c.id===`tab-${name}`);
+  });
+}
+
+loadProfiles();
+</script>
+</body>
+</html>
