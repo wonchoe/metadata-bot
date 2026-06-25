@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MetaBot — Login</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{--bg:#0d0d1a;--card:#13132a;--border:#2a2a4a;--accent:#7c3aed;--text:#e2e8f0;--muted:#64748b;--danger:#ef4444}
+  body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+
+  .bg-grid{
+    position:fixed;inset:0;
+    background-image:linear-gradient(#2a2a4a22 1px,transparent 1px),linear-gradient(90deg,#2a2a4a22 1px,transparent 1px);
+    background-size:40px 40px;
+    pointer-events:none;
+  }
+  .glow{position:fixed;width:500px;height:500px;border-radius:50%;background:radial-gradient(circle,#7c3aed18,transparent 70%);top:50%;left:50%;transform:translate(-50%,-60%);pointer-events:none}
+
+  .card{
+    background:var(--card);border:1px solid var(--border);border-radius:16px;
+    padding:36px 32px;width:100%;max-width:360px;
+    box-shadow:0 20px 60px #00000060;
+    animation:fadeUp .4s ease both;
+    position:relative;
+  }
+  @keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+
+  .logo{
+    width:52px;height:52px;background:linear-gradient(135deg,#7c3aed,#4f46e5);
+    border-radius:14px;display:flex;align-items:center;justify-content:center;
+    margin:0 auto 20px;box-shadow:0 0 30px #7c3aed55;
+    animation:logoPop .5s cubic-bezier(.175,.885,.32,1.275) .1s both;
+  }
+  @keyframes logoPop{from{transform:scale(0.5);opacity:0}to{transform:scale(1);opacity:1}}
+  .logo i{color:#fff;font-size:1.4rem}
+
+  h1{text-align:center;font-size:1.3rem;margin-bottom:4px;background:linear-gradient(135deg,#a78bfa,#60a5fa);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+  .subtitle{text-align:center;font-size:.8rem;color:var(--muted);margin-bottom:28px}
+
+  .form-group{margin-bottom:14px}
+  label{display:block;font-size:.75rem;color:var(--muted);margin-bottom:5px}
+  .input-wrap{position:relative}
+  .input-wrap i{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:.82rem;pointer-events:none}
+  input{
+    background:#1a1a2e;border:1px solid var(--border);border-radius:8px;
+    padding:9px 10px 9px 34px;color:var(--text);font-size:.9rem;outline:none;width:100%;
+    transition:border-color .18s,box-shadow .18s;
+  }
+  input:focus{border-color:var(--accent);box-shadow:0 0 0 3px #7c3aed22}
+
+  .btn{
+    width:100%;border:none;border-radius:8px;padding:11px;font-size:.9rem;cursor:pointer;
+    font-weight:600;background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;
+    transition:opacity .18s,transform .12s,box-shadow .18s;
+    box-shadow:0 4px 20px #7c3aed44;
+    display:flex;align-items:center;justify-content:center;gap:8px;
+    margin-top:6px;
+  }
+  .btn:hover{opacity:.9;box-shadow:0 6px 28px #7c3aed66}
+  .btn:active{transform:scale(.98)}
+
+  .error{
+    background:#2d0f0f;border:1px solid var(--danger);border-radius:7px;
+    padding:9px 12px;font-size:.8rem;color:#fca5a5;margin-bottom:14px;
+    display:flex;align-items:center;gap:7px;
+    animation:shake .3s ease;
+  }
+  @keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
+</style>
+</head>
+<body>
+<div class="bg-grid"></div>
+<div class="glow"></div>
+
+<div class="card">
+  <div class="logo"><i class="fa-solid fa-microchip"></i></div>
+  <h1>MetaBot</h1>
+  <p class="subtitle">EXIF Injector — sign in to continue</p>
+
+  {% if error %}
+  <div class="error">
+    <i class="fa-solid fa-circle-exclamation"></i>
+    Invalid username or password
+  </div>
+  {% endif %}
+
+  <form method="POST" action="/login">
+    <div class="form-group">
+      <label>Username</label>
+      <div class="input-wrap">
+        <i class="fa-solid fa-user"></i>
+        <input type="text" name="username" placeholder="Enter username" autofocus autocomplete="username">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Password</label>
+      <div class="input-wrap">
+        <i class="fa-solid fa-lock"></i>
+        <input type="password" name="password" placeholder="Enter password" autocomplete="current-password">
+      </div>
+    </div>
+    <button type="submit" class="btn">
+      <i class="fa-solid fa-right-to-bracket"></i> Sign In
+    </button>
+  </form>
+</div>
+</body>
+</html>

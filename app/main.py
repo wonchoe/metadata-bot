@@ -6,8 +6,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, Request, Response
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -20,11 +20,25 @@ OUTPUT_DIR = Path("data/outputs")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+AUTH_USERNAME = "user"
+AUTH_PASSWORD = "987321"
+AUTH_COOKIE = "mb_session"
+AUTH_TOKEN = "metabot_secret_token_x9k2"
+
 app = FastAPI(title="MetaBot")
 templates = Jinja2Templates(directory="app/templates")
 static_dir = Path("app/static")
 static_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+
+def is_authenticated(request: Request) -> bool:
+    return request.cookies.get(AUTH_COOKIE) == AUTH_TOKEN
+
+
+def require_auth(request: Request):
+    if not is_authenticated(request):
+        raise HTTPException(status_code=401, detail="Not authenticated")
 
 
 def cleanup_old_files():
@@ -50,50 +64,72 @@ def cleanup_old_files():
 @app.on_event("startup")
 def startup():
     create_tables()
-    # seed default Miami profile if none exist
     db_gen = get_db()
     db = next(db_gen)
     try:
         if db.query(Profile).count() == 0:
-            p = Profile(
-                name="iPhone 15 Pro Max — Miami",
-                is_default=True,
-            )
-            db.add(p)
+            db.add(Profile(name="iPhone 15 Pro Max — Miami", is_default=True))
             db.commit()
     finally:
         try:
             next(db_gen)
         except StopIteration:
             pass
-
     scheduler = BackgroundScheduler()
     scheduler.add_job(cleanup_old_files, "interval", hours=1)
     scheduler.start()
 
 
-# ── Pages ────────────────────────────────────────────────────────────────────
+# ── Auth ──────────────────────────────────────────────────────────────────────
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request, error: str = ""):
+    if is_authenticated(request):
+        return RedirectResponse("/", status_code=302)
+    return templates.TemplateResponse("login.html", {"request": request, "error": error})
+
+
+@app.post("/login")
+async def login(
+    response: Response,
+    username: str = Form(...),
+    password: str = Form(...),
+):
+    if username == AUTH_USERNAME and password == AUTH_PASSWORD:
+        resp = RedirectResponse("/", status_code=302)
+        resp.set_cookie(AUTH_COOKIE, AUTH_TOKEN, httponly=True, max_age=86400 * 30)
+        return resp
+    return RedirectResponse("/login?error=1", status_code=302)
+
+
+@app.get("/logout")
+async def logout():
+    resp = RedirectResponse("/login", status_code=302)
+    resp.delete_cookie(AUTH_COOKIE)
+    return resp
+
+
+# ── Pages ─────────────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request, db: Session = Depends(get_db)):
+    if not is_authenticated(request):
+        return RedirectResponse("/login", status_code=302)
     profiles = db.query(Profile).order_by(Profile.created_at).all()
-    default = next((p for p in profiles if p.is_default), profiles[0] if profiles else None)
-    return templates.TemplateResponse("index.html", {
-        "request": request,
-        "profiles": profiles,
-        "default_profile": default,
-    })
+    return templates.TemplateResponse("index.html", {"request": request, "profiles": profiles})
 
 
-# ── Profile CRUD ─────────────────────────────────────────────────────────────
+# ── Profile CRUD ──────────────────────────────────────────────────────────────
 
 @app.get("/api/profiles")
-async def list_profiles(db: Session = Depends(get_db)):
+async def list_profiles(request: Request, db: Session = Depends(get_db)):
+    require_auth(request)
     return db.query(Profile).order_by(Profile.created_at).all()
 
 
 @app.get("/api/profiles/{profile_id}")
-async def get_profile(profile_id: int, db: Session = Depends(get_db)):
+async def get_profile(profile_id: int, request: Request, db: Session = Depends(get_db)):
+    require_auth(request)
     p = db.query(Profile).filter(Profile.id == profile_id).first()
     if not p:
         raise HTTPException(404, "Profile not found")
@@ -102,6 +138,7 @@ async def get_profile(profile_id: int, db: Session = Depends(get_db)):
 
 @app.post("/api/profiles")
 async def create_profile(
+    request: Request,
     name: str = Form(...),
     make: str = Form("Apple"),
     model: str = Form("iPhone 15 Pro Max"),
@@ -119,8 +156,9 @@ async def create_profile(
     is_default: bool = Form(False),
     db: Session = Depends(get_db),
 ):
+    require_auth(request)
     if is_default:
-        db.query(Profile).filter(Profile.is_default == True).update({"is_default": False})
+        db.query(Profile).update({"is_default": False})
     p = Profile(
         name=name, make=make, model=model, software=software,
         lens_make=lens_make, lens_model=lens_model,
@@ -139,6 +177,7 @@ async def create_profile(
 @app.put("/api/profiles/{profile_id}")
 async def update_profile(
     profile_id: int,
+    request: Request,
     name: str = Form(...),
     make: str = Form("Apple"),
     model: str = Form("iPhone 15 Pro Max"),
@@ -156,11 +195,12 @@ async def update_profile(
     is_default: bool = Form(False),
     db: Session = Depends(get_db),
 ):
+    require_auth(request)
     p = db.query(Profile).filter(Profile.id == profile_id).first()
     if not p:
         raise HTTPException(404, "Profile not found")
     if is_default:
-        db.query(Profile).filter(Profile.is_default == True).update({"is_default": False})
+        db.query(Profile).update({"is_default": False})
     for field, val in dict(
         name=name, make=make, model=model, software=software,
         lens_make=lens_make, lens_model=lens_model,
@@ -177,7 +217,8 @@ async def update_profile(
 
 
 @app.delete("/api/profiles/{profile_id}")
-async def delete_profile(profile_id: int, db: Session = Depends(get_db)):
+async def delete_profile(profile_id: int, request: Request, db: Session = Depends(get_db)):
+    require_auth(request)
     p = db.query(Profile).filter(Profile.id == profile_id).first()
     if not p:
         raise HTTPException(404, "Profile not found")
@@ -186,18 +227,46 @@ async def delete_profile(profile_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
-@app.post("/api/profiles/{profile_id}/set-default")
-async def set_default(profile_id: int, db: Session = Depends(get_db)):
-    db.query(Profile).update({"is_default": False})
-    p = db.query(Profile).filter(Profile.id == profile_id).first()
-    if not p:
-        raise HTTPException(404, "Profile not found")
-    p.is_default = True
+# ── File history ──────────────────────────────────────────────────────────────
+
+@app.get("/api/files")
+async def list_files(request: Request, db: Session = Depends(get_db)):
+    require_auth(request)
+    files = db.query(ProcessedFile).order_by(ProcessedFile.created_at.desc()).all()
+    result = []
+    for f in files:
+        out_path = OUTPUT_DIR / f.filename
+        size = out_path.stat().st_size if out_path.exists() else 0
+        expires_at = f.created_at + timedelta(hours=24)
+        result.append({
+            "id": f.id,
+            "filename": f.filename,
+            "original_name": f.original_name,
+            "created_at": f.created_at.isoformat(),
+            "expires_at": expires_at.isoformat(),
+            "size_bytes": size,
+            "exists": out_path.exists(),
+            "download_url": f"/api/download/{f.filename}",
+        })
+    return result
+
+
+@app.delete("/api/files/{file_id}")
+async def delete_file(file_id: int, request: Request, db: Session = Depends(get_db)):
+    require_auth(request)
+    f = db.query(ProcessedFile).filter(ProcessedFile.id == file_id).first()
+    if not f:
+        raise HTTPException(404, "File not found")
+    for d in [UPLOAD_DIR, OUTPUT_DIR]:
+        p = d / f.filename
+        if p.exists():
+            p.unlink()
+    db.delete(f)
     db.commit()
     return {"ok": True}
 
 
-# ── Process file ─────────────────────────────────────────────────────────────
+# ── Process ───────────────────────────────────────────────────────────────────
 
 PHOTO_EXT = {".jpg", ".jpeg", ".png", ".heic", ".tiff", ".webp"}
 VIDEO_EXT = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}
@@ -205,11 +274,15 @@ VIDEO_EXT = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}
 
 @app.post("/api/process")
 async def process_file(
+    request: Request,
     file: UploadFile = File(...),
     profile_id: int = Form(...),
     custom_datetime: Optional[str] = Form(None),
+    override_lat: Optional[float] = Form(None),
+    override_lng: Optional[float] = Form(None),
     db: Session = Depends(get_db),
 ):
+    require_auth(request)
     profile = db.query(Profile).filter(Profile.id == profile_id).first()
     if not profile:
         raise HTTPException(404, "Profile not found")
@@ -228,57 +301,85 @@ async def process_file(
     shutil.copy2(in_path, out_path)
 
     shoot_dt = custom_datetime or datetime.utcnow().strftime("%Y:%m:%d %H:%M:%S")
+    gps_lat = override_lat if override_lat is not None else profile.gps_latitude
+    gps_lng = override_lng if override_lng is not None else profile.gps_longitude
+    unique_id = uid[:32].upper()
 
     tags = {
         "Make": profile.make,
         "Model": profile.model,
         "Software": profile.software,
+        "HostComputer": profile.model,
         "LensMake": profile.lens_make,
         "LensModel": profile.lens_model,
+        "LensInfo": f"{profile.focal_length} {profile.focal_length} {profile.f_number} {profile.f_number}",
         "FNumber": profile.f_number,
+        "ApertureValue": profile.f_number,
+        "MaxApertureValue": profile.f_number,
         "FocalLength": profile.focal_length,
+        "FocalLengthIn35mmFormat": round(profile.focal_length * 6.5),
         "ISO": profile.iso,
+        "ISOSpeedRatings": profile.iso,
         "ExposureTime": profile.exposure_time,
+        "ShutterSpeedValue": profile.exposure_time,
+        "ExposureProgram": "Program AE",
+        "ExposureMode": "Auto",
+        "MeteringMode": "Multi-segment",
+        "Flash": "Auto, Did not fire",
+        "WhiteBalance": "Auto",
+        "SceneCaptureType": "Standard",
         "DateTimeOriginal": shoot_dt,
         "CreateDate": shoot_dt,
         "ModifyDate": shoot_dt,
-        "GPSLatitude": abs(profile.gps_latitude),
-        "GPSLatitudeRef": "N" if profile.gps_latitude >= 0 else "S",
-        "GPSLongitude": abs(profile.gps_longitude),
-        "GPSLongitudeRef": "E" if profile.gps_longitude >= 0 else "W",
+        "ImageUniqueID": unique_id,
+        "GPSLatitude": abs(gps_lat),
+        "GPSLatitudeRef": "N" if gps_lat >= 0 else "S",
+        "GPSLongitude": abs(gps_lng),
+        "GPSLongitudeRef": "E" if gps_lng >= 0 else "W",
         "GPSAltitude": profile.gps_altitude,
         "GPSAltitudeRef": 0,
-        "GPSDateStamp": shoot_dt[:10].replace(":", ":"),
+        "GPSDateStamp": shoot_dt[:10].replace("-", ":"),
+        "GPSTimeStamp": shoot_dt[11:],
+        "XMP:Make": profile.make,
+        "XMP:Model": profile.model,
+        "XMP:Software": profile.software,
+        "XMP:CreatorTool": f"{profile.make} {profile.model}",
+        "XMP:Lens": profile.lens_model,
+        "XMP:LensModel": profile.lens_model,
+        "XMP:DateCreated": shoot_dt,
+        "XMP:MetadataDate": shoot_dt,
+        "XMP:ModifyDate": shoot_dt,
+        "XMP:CreateDate": shoot_dt,
     }
 
     with exiftool.ExifToolHelper() as et:
         et.set_tags(
             [str(out_path)],
             tags=tags,
-            params=["-overwrite_original", "-ignoreMinorErrors"],
+            params=[
+                "-overwrite_original",
+                "-ignoreMinorErrors",
+                "-icc_profile=",
+                "-XMP-xmpMM:History=",
+                "-XMP-xmpMM:DocumentID=",
+                "-XMP-xmpMM:OriginalDocumentID=",
+                "-XMP-xmpMM:InstanceID=",
+                "-XMP-samsung:all=",
+                "-XMP-GPano:all=",
+            ],
         )
 
     out_filename = f"{uid}_processed{ext}"
-    db_file = ProcessedFile(
-        filename=out_filename,
-        original_name=file.filename,
-    )
-    db.add(db_file)
+    db.add(ProcessedFile(filename=out_filename, original_name=file.filename))
     db.commit()
 
-    return {
-        "download_url": f"/api/download/{out_filename}",
-        "filename": out_filename,
-    }
+    return {"download_url": f"/api/download/{out_filename}", "filename": out_filename}
 
 
 @app.get("/api/download/{filename}")
-async def download(filename: str):
+async def download(filename: str, request: Request):
+    require_auth(request)
     path = OUTPUT_DIR / filename
     if not path.exists():
         raise HTTPException(404, "File not found or expired")
-    return FileResponse(
-        path,
-        media_type="application/octet-stream",
-        filename=filename,
-    )
+    return FileResponse(path, media_type="application/octet-stream", filename=filename)
