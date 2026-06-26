@@ -726,7 +726,6 @@ async function saveProfile() {
   const name = document.getElementById('pName').value.trim();
   if (!name) { alert('Profile name is required'); return; }
   body.append('name', name);
-  ['make','model','software','exposure_time'].forEach(f => body.append(f, document.getElementById('p'+f.charAt(0).toUpperCase()+f.slice(1).replace('_t','T')).value));
   body.append('make', document.getElementById('pMake').value);
   body.append('model', document.getElementById('pModel').value);
   body.append('software', document.getElementById('pSoftware').value);
